@@ -1,7 +1,7 @@
 /**
  * TWDxHouseKeeping Tools — src/cleanup.js
  * Developer: https://www.TheWebDexter.com
- * Policy: Strict "No History" (Keeps exactly 1 live deployment)
+ * Policy: Strict "No History" (Keeps exactly 1 live deployment/action run)
  */
 
 const GH_API = "https://api.github.com";
@@ -59,7 +59,7 @@ async function cleanupCloudflareAccount(cf) {
     console.error(`  ❌ Failed to fetch CF Workers: ${wRes.status} ${wRes.statusText} - ${errText}`);
   }
 
-  // Clean Pages (Removed ?per_page=100 to fix the 400 Bad Request bug)
+  // Clean Pages
   const pRes = await fetch(`${CF_API}/accounts/${cf.account_id}/pages/projects`, { headers: h });
   if (pRes.ok) {
     const projects = (await pRes.json())?.result || [];
@@ -128,6 +128,7 @@ async function cleanupGitHubAccount(gh) {
   for (const repo of repos) {
     console.log(`  📦 Repo [${repo.full_name}]`);
     await pruneGHDeployments(repo.full_name, h);
+    await cleanupGitHubActions(repo.full_name, h); // Clean up Action history
     await delay(100);
   }
 }
@@ -160,6 +161,26 @@ async function pruneGHDeployments(repo, headers) {
         await delay(100);
       }
     }
+  }
+}
+
+async function cleanupGitHubActions(repo, headers) {
+  const runsRes = await fetch(`${GH_API}/repos/${repo}/actions/runs?per_page=100`, { headers }).then(r => r.ok ? r.json() : null);
+  const runs = runsRes?.workflow_runs || [];
+  
+  const currentRunId = process.env.GITHUB_RUN_ID;
+  const pastRuns = runs.filter(r => r.id.toString() !== currentRunId)
+                       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  if (pastRuns.length <= KEEP_COUNT) return;
+
+  const runsToDelete = pastRuns.slice(KEEP_COUNT);
+  console.log(`      ⚡ Actions: Found ${runs.length} runs. Deleting oldest ${runsToDelete.length}...`);
+  
+  for (const run of runsToDelete) {
+    const r = await fetch(`${GH_API}/repos/${repo}/actions/runs/${run.id}`, { method: "DELETE", headers });
+    if (r.ok || r.status === 204) console.log(`      🗑️ Deleted Workflow Run: ${run.id} (${run.name})`);
+    await delay(100);
   }
 }
 

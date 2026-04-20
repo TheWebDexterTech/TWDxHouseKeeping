@@ -91,12 +91,20 @@ async function cleanupWorkerDeep(accountId, workerId, headers, count, flags) {
     const vRes = await fetch(`${CF_API}/accounts/${accountId}/workers/workers/${workerId}/versions`, { headers });
     if (vRes.ok) {
       const versions = (await vRes.json())?.result || [];
-      versions.sort((a, b) => new Date(b.metadata.timestamp) - new Date(a.metadata.timestamp));
+      
+      // SAFE SORT: Handles cases where metadata.timestamp might be missing
+      versions.sort((a, b) => {
+        const timeA = a.metadata?.timestamp ? new Date(a.metadata.timestamp).getTime() : 0;
+        const timeB = b.metadata?.timestamp ? new Date(b.metadata.timestamp).getTime() : 0;
+        return timeB - timeA;
+      });
+
       if (versions.length > count) {
         console.log(`      ⚡ Versions [${workerId}]: Found ${versions.length}. Purging history...`);
         for (let i = count; i < versions.length; i++) {
           const r = await fetch(`${CF_API}/accounts/${accountId}/workers/workers/${workerId}/versions/${versions[i].id}`, { method: "DELETE", headers });
           if (r.ok) console.log(`          🗑️ Purged Code: ${versions[i].id.slice(0,8)}`);
+          else if (r.status === 409) console.log(`          ⏭️ Skipped: Version ${versions[i].id.slice(0,8)} is currently active.`);
           await delay(100);
         }
       }

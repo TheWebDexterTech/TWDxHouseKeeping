@@ -1,14 +1,12 @@
 /**
  * TWDxHouseKeeping Tools — src/cleanup.js
  * Developer: https://www.TheWebDexter.com
- * Policy: Strict "No History" (Keeps exactly 1 live deployment/action run)
+ * Features: GitHub (Deployments + Actions), Cloudflare (Workers, Pages + Versions)
  */
 
 const GH_API = "https://api.github.com";
 const CF_API = "https://api.cloudflare.com/client/v4";
-const KEEP_COUNT = 1; // Keeps ONLY the active deployment (index 0)
 
-// Helper: Add a 100ms delay to avoid API rate limits
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function runCleanup() {
@@ -16,80 +14,97 @@ async function runCleanup() {
   console.log("🌐 Developer: https://www.TheWebDexter.com\n");
   
   const accountsStr = process.env.ACCOUNTS_JSON;
-  
   if (!accountsStr) {
-    console.error("❌ ERROR: ACCOUNTS_JSON secret is missing! Please configure your repository secrets.");
+    console.error("❌ ERROR: ACCOUNTS_JSON secret is missing!");
     process.exit(1);
   }
 
-  let accounts = {};
-  try {
-    accounts = JSON.parse(accountsStr);
-  } catch (e) {
-    console.error("❌ ERROR: ACCOUNTS_JSON is not valid JSON!");
-    process.exit(1);
-  }
+  const accounts = JSON.parse(accountsStr);
 
   // 1. Process Cloudflare
   for (const cf of accounts.cloudflare || []) {
     console.log(`\n☁️ Processing Cloudflare Account: ${cf.label}`);
-    await cleanupCloudflareAccount(cf);
+    const h = { Authorization: `Bearer ${cf.token}`, "Content-Type": "application/json" };
+    const count = cf.keep_count ?? 1;
+
+    // Clean Workers & Versions
+    if (cf.clean_workers || cf.clean_versions) {
+      const wRes = await fetch(`${CF_API}/accounts/${cf.account_id}/workers/scripts`, { headers: h });
+      if (wRes.ok) {
+        const scripts = (await wRes.json())?.result || [];
+        for (const s of scripts) await cleanupWorkerDeep(cf.account_id, s.id, h, count, cf);
+      }
+    }
+
+    // Clean Pages
+    if (cf.clean_pages) {
+      const pRes = await fetch(`${CF_API}/accounts/${cf.account_id}/pages/projects`, { headers: h });
+      if (pRes.ok) {
+        const projects = (await pRes.json())?.result || [];
+        for (const project of projects) await cleanupPagesDeployments(cf.account_id, project.name, h, count);
+      }
+    }
   }
 
   // 2. Process GitHub
   for (const gh of accounts.github || []) {
     console.log(`\n🐙 Processing GitHub Account: ${gh.label}`);
-    await cleanupGitHubAccount(gh);
+    const h = { 
+      Authorization: `Bearer ${gh.token}`, 
+      Accept: "application/vnd.github+json", 
+      "X-GitHub-Api-Version": "2022-11-28", 
+      "User-Agent": "TWDxHouseKeeping-Tools/1.0" 
+    };
+    const repos = await fetchAllRepos(gh, h);
+    const count = gh.keep_count ?? 1;
+    
+    for (const repo of repos) {
+      console.log(`  📦 Repo [${repo.full_name}]`);
+      if (gh.clean_deployments) await pruneGHDeployments(repo.full_name, h, count);
+      if (gh.clean_actions) await cleanupGitHubActions(repo.full_name, h, count);
+      await delay(100);
+    }
   }
 
   console.log("\n✅ TWDxHouseKeeping COMPLETE.");
 }
 
-// ── CLOUDFLARE LOGIC ──────────────────────────────────────────────────
-async function cleanupCloudflareAccount(cf) {
-  const h = { Authorization: `Bearer ${cf.token}`, "Content-Type": "application/json" };
-  
-  // Clean Workers
-  const wRes = await fetch(`${CF_API}/accounts/${cf.account_id}/workers/scripts`, { headers: h });
-  if (wRes.ok) {
-    const scripts = (await wRes.json())?.result || [];
-    for (const s of scripts) await cleanupWorkerDeployments(cf.account_id, s.id, h);
-  } else {
-    const errText = await wRes.text();
-    console.error(`  ❌ Failed to fetch CF Workers: ${wRes.status} ${wRes.statusText} - ${errText}`);
+// ── CLOUDFLARE HELPERS ────────────────────────────────────────────────
+async function cleanupWorkerDeep(accountId, workerId, headers, count, flags) {
+  // A. Clean Deployments (Traffic routing history)
+  if (flags.clean_workers) {
+    const dRes = await fetch(`${CF_API}/accounts/${accountId}/workers/scripts/${workerId}/deployments`, { headers });
+    if (dRes.ok) {
+      const deps = (await dRes.json())?.result?.items || [];
+      if (deps.length > count) {
+        console.log(`      ⚡ Worker [${workerId}]: Found ${deps.length} deployments. Cleaning...`);
+        for (let i = count; i < deps.length; i++) {
+          await fetch(`${CF_API}/accounts/${accountId}/workers/scripts/${workerId}/deployments/${deps[i].id}`, { method: "DELETE", headers });
+          await delay(50);
+        }
+      }
+    }
   }
 
-  // Clean Pages
-  const pRes = await fetch(`${CF_API}/accounts/${cf.account_id}/pages/projects`, { headers: h });
-  if (pRes.ok) {
-    const projects = (await pRes.json())?.result || [];
-    for (const project of projects) await cleanupPagesDeployments(cf.account_id, project.name, h);
-  } else {
-    const errText = await pRes.text();
-    console.error(`  ❌ Failed to fetch CF Pages: ${pRes.status} ${pRes.statusText} - ${errText}`);
-  }
-}
-
-async function cleanupWorkerDeployments(accountId, workerId, headers) {
-  const res = await fetch(`${CF_API}/accounts/${accountId}/workers/scripts/${workerId}/deployments`, { headers });
-  if (!res.ok) return;
-  const deps = (await res.json())?.result?.items || [];
-  
-  if (deps.length <= KEEP_COUNT) {
-    console.log(`  ⚡ Worker [${workerId}]: Clean (${deps.length} found)`);
-    return;
-  }
-
-  console.log(`  ⚡ Worker [${workerId}]: Found ${deps.length}. Deleting oldest ${deps.length - KEEP_COUNT}...`);
-  for (let i = KEEP_COUNT; i < deps.length; i++) {
-    const r = await fetch(`${CF_API}/accounts/${accountId}/workers/scripts/${workerId}/deployments/${deps[i].id}`, { method: "DELETE", headers });
-    if (r.ok || r.status === 204) console.log(`      🗑️ Deleted Worker Deployment: ${deps[i].id}`);
-    else console.error(`      ⚠️ Failed to delete Worker Deployment: ${deps[i].id} (${r.statusText})`);
-    await delay(100);
+  // B. Clean Versions (Code history - Beta API)
+  if (flags.clean_versions) {
+    const vRes = await fetch(`${CF_API}/accounts/${accountId}/workers/workers/${workerId}/versions`, { headers });
+    if (vRes.ok) {
+      const versions = (await vRes.json())?.result || [];
+      versions.sort((a, b) => new Date(b.metadata.timestamp) - new Date(a.metadata.timestamp));
+      if (versions.length > count) {
+        console.log(`      ⚡ Versions [${workerId}]: Found ${versions.length}. Purging history...`);
+        for (let i = count; i < versions.length; i++) {
+          const r = await fetch(`${CF_API}/accounts/${accountId}/workers/workers/${workerId}/versions/${versions[i].id}`, { method: "DELETE", headers });
+          if (r.ok) console.log(`          🗑️ Purged Code: ${versions[i].id.slice(0,8)}`);
+          await delay(100);
+        }
+      }
+    }
   }
 }
 
-async function cleanupPagesDeployments(accountId, projectName, headers) {
+async function cleanupPagesDeployments(accountId, projectName, headers, count) {
   let allDeps = [];
   let page = 1;
   while (true) {
@@ -100,39 +115,18 @@ async function cleanupPagesDeployments(accountId, projectName, headers) {
     allDeps = allDeps.concat(items);
     if (items.length < 25) break;
     page++;
-    await delay(100);
   }
-
   allDeps.sort((a, b) => new Date(b.created_on) - new Date(a.created_on));
-
-  if (allDeps.length <= KEEP_COUNT) {
-    console.log(`  📄 Pages [${projectName}]: Clean (${allDeps.length} found)`);
-    return;
-  }
-
-  console.log(`  📄 Pages [${projectName}]: Found ${allDeps.length}. Deleting oldest ${allDeps.length - KEEP_COUNT}...`);
-  for (let i = KEEP_COUNT; i < allDeps.length; i++) {
-    const r = await fetch(`${CF_API}/accounts/${accountId}/pages/projects/${projectName}/deployments/${allDeps[i].id}?force=true`, { method: "DELETE", headers });
-    if (r.ok || r.status === 204) console.log(`      🗑️ Deleted Pages Deployment: ${allDeps[i].id}`);
-    else if (r.status === 400 || r.status === 409) console.log(`      ⏭️ Skipped Active/Undeletable Pages Deployment: ${allDeps[i].id}`);
-    else console.error(`      ⚠️ Failed to delete Pages Deployment: ${allDeps[i].id} (${r.statusText})`);
-    await delay(100);
+  if (allDeps.length > count) {
+    console.log(`      📄 Pages [${projectName}]: Found ${allDeps.length}. Deleting...`);
+    for (let i = count; i < allDeps.length; i++) {
+      await fetch(`${CF_API}/accounts/${accountId}/pages/projects/${projectName}/deployments/${allDeps[i].id}?force=true`, { method: "DELETE", headers });
+      await delay(50);
+    }
   }
 }
 
-// ── GITHUB LOGIC ──────────────────────────────────────────────────────
-async function cleanupGitHubAccount(gh) {
-  const h = { Authorization: `Bearer ${gh.token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "TWDxHouseKeeping-Tools/1.0" };
-  const repos = await fetchAllRepos(gh, h);
-  
-  for (const repo of repos) {
-    console.log(`  📦 Repo [${repo.full_name}]`);
-    await pruneGHDeployments(repo.full_name, h);
-    await cleanupGitHubActions(repo.full_name, h); // Clean up Action history
-    await delay(100);
-  }
-}
-
+// ── GITHUB HELPERS ────────────────────────────────────────────────────
 async function fetchAllRepos(gh, headers) {
   let repos = [];
   for (const org of gh.orgs || []) repos = repos.concat(await ghPaginate(`${GH_API}/orgs/${org}/repos?per_page=100&type=all`, headers));
@@ -141,46 +135,37 @@ async function fetchAllRepos(gh, headers) {
   return repos.filter(r => { if (seen.has(r.id)) return false; seen.add(r.id); return true; });
 }
 
-async function pruneGHDeployments(repo, headers) {
+async function pruneGHDeployments(repo, headers, count) {
   const envRes = await fetch(`${GH_API}/repos/${repo}/environments`, { headers }).then(r => r.ok ? r.json() : null);
   const targets = (envRes?.environments || []).length > 0 ? envRes.environments.map(e => e.name) : [null];
-  
   for (const envName of targets) {
     const qs = envName ? `?environment=${encodeURIComponent(envName)}&per_page=100` : "?per_page=100";
     const deps = await ghPaginate(`${GH_API}/repos/${repo}/deployments${qs}`, headers);
-    
-    if (deps.length > KEEP_COUNT) {
-      console.log(`      Found ${deps.length} deployments in ${envName || 'default env'}. Deleting oldest ${deps.length - KEEP_COUNT}...`);
-      for (let i = KEEP_COUNT; i < deps.length; i++) {
+    if (deps.length > count) {
+      console.log(`      ⚡ Found ${deps.length} deployments in ${envName || 'default env'}. Cleaning...`);
+      for (let i = count; i < deps.length; i++) {
         await fetch(`${GH_API}/repos/${repo}/deployments/${deps[i].id}/statuses`, {
           method: "POST", headers: { ...headers, "Content-Type": "application/json" },
           body: JSON.stringify({ state: "inactive" }),
         }).catch(() => {});
-        const r = await fetch(`${GH_API}/repos/${repo}/deployments/${deps[i].id}`, { method: "DELETE", headers });
-        if (r.ok || r.status === 204) console.log(`      🗑️ Deleted GH Deployment: ${deps[i].id}`);
-        await delay(100);
+        await fetch(`${GH_API}/repos/${repo}/deployments/${deps[i].id}`, { method: "DELETE", headers });
+        await delay(50);
       }
     }
   }
 }
 
-async function cleanupGitHubActions(repo, headers) {
+async function cleanupGitHubActions(repo, headers, count) {
   const runsRes = await fetch(`${GH_API}/repos/${repo}/actions/runs?per_page=100`, { headers }).then(r => r.ok ? r.json() : null);
-  const runs = runsRes?.workflow_runs || [];
-  
-  const currentRunId = process.env.GITHUB_RUN_ID;
-  const pastRuns = runs.filter(r => r.id.toString() !== currentRunId)
-                       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-  if (pastRuns.length <= KEEP_COUNT) return;
-
-  const runsToDelete = pastRuns.slice(KEEP_COUNT);
-  console.log(`      ⚡ Actions: Found ${runs.length} runs. Deleting oldest ${runsToDelete.length}...`);
-  
-  for (const run of runsToDelete) {
-    const r = await fetch(`${GH_API}/repos/${repo}/actions/runs/${run.id}`, { method: "DELETE", headers });
-    if (r.ok || r.status === 204) console.log(`      🗑️ Deleted Workflow Run: ${run.id} (${run.name})`);
-    await delay(100);
+  const runs = (runsRes?.workflow_runs || [])
+                 .filter(r => r.id.toString() !== process.env.GITHUB_RUN_ID)
+                 .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  if (runs.length <= count) return;
+  const toDelete = runs.slice(count);
+  console.log(`      🎬 Actions: Found ${runs.length}. Purging oldest ${toDelete.length}...`);
+  for (const run of toDelete) {
+    await fetch(`${GH_API}/repos/${repo}/actions/runs/${run.id}`, { method: "DELETE", headers });
+    await delay(50);
   }
 }
 
@@ -195,10 +180,9 @@ async function ghPaginate(url, headers) {
     else return data;
     const m = (r.headers.get("Link") || "").match(/<([^>]+)>;\s*rel="next"/);
     nextUrl = m ? m[1] : null;
-    await delay(100);
+    await delay(50);
   }
   return results;
 }
 
-// Start Execution
 runCleanup();

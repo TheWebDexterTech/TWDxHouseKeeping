@@ -1,44 +1,45 @@
 # 🧹 TWDxHouseKeeping Tools
 **Developed by:** [TheWebDexter](https://www.TheWebDexter.com)
 
-A pure GitHub Action that runs automatically to strictly enforce a **"Keep Only 1"** deployment policy across your GitHub and Cloudflare accounts. It deletes all abandoned preview environments, stale Pages deployments, and Worker history to keep your limits low and your dashboards clean.
+A powerful, zero-dependency GitHub Action that automates deep housekeeping across your development stack. Keep only what you need and wipe the rest.
 
-## 🚀 Setup Guide
+## 🛠️ Features
+- **GitHub Cleanup:** Delete old deployments and purge massive Action history.
+- **Cloudflare Cleanup:** Shred stale Pages deployments and Worker history.
+- **Granular Control:** Choose what to clean and how much to keep per account.
+- **Rate-Limit Safe:** Intelligent throttling to avoid API bans.
 
-### Step 1: Generate API Tokens
-**GitHub:**
-1. Go to **Settings → Developer settings → Personal access tokens → Fine-grained tokens**.
-2. Click **Generate new token**.
-3. **Repository access:** `All repositories`.
-4. **Permissions needed:** Deployments (Read & Write), Contents (Read & Write), Pull requests (Read-only), Metadata (Read-only).
-5. Copy the generated `ghp_...` token.
+## 🚀 Setup
 
-**Cloudflare:**
-1. Go to Cloudflare Dashboard **→ My Profile → API Tokens**.
-2. Click **Create Token** → **Custom Token**.
-3. **Permissions needed:** `Account` → `Cloudflare Pages` (Edit), `Workers Scripts` (Edit), `Account Settings` (Read).
-4. Copy the generated token. (Grab your **Account ID** from the right-hand sidebar of your dashboard while you are there).
+### 1. Add the Script
+Create `.github/workflows/cleanup.yml` and `src/cleanup.js` in your repository.
 
-### Step 2: Configure Your Repository
-1. In your GitHub repository, go to **Settings → Secrets and variables → Actions → New repository secret**.
-2. **Name:** `ACCOUNTS_JSON`
-3. **Secret:** Paste your configuration in the exact format below, using the tokens you just generated:
+### 2. Configure the Secret
+Add a Repository Secret named `ACCOUNTS_JSON`. 
 
-```json
-{
-  "github": [
-    {
-      "label": "My Dev Profile",
-      "token": "ghp_YOUR_NEW_GITHUB_TOKEN",
-      "orgs":  ["TheWebDexterTech"],
-      "users": ["thewebdexter"]
-    }
-  ],
-  "cloudflare": [
-    {
-      "label":      "Main Account",
-      "token":      "YOUR_NEW_CF_API_TOKEN",
-      "account_id": "YOUR_CF_ACCOUNT_ID"
-    }
-  ]
-}
+### 3. Configuration Schema
+Each account block in your JSON supports these granular flags:
+
+| Key | Description | Default |
+| :--- | :--- | :--- |
+| `keep_count` | Number of recent items to preserve | `1` |
+| **GitHub Flags** | | |
+| `clean_deployments`| Delete stale repo deployments | `false` |
+| `clean_actions` | Purge workflow run history | `false` |
+| **Cloudflare Flags** | | |
+| `clean_workers` | Delete old Worker deployments | `false` |
+| `clean_pages` | Delete old Pages deployments | `false` |
+
+---
+
+## ⏰ Scheduling & Testing
+The schedule is defined in `.github/workflows/cleanup.yml`.
+
+### Testing Phase (Recommended)
+To test the tool for one week, we recommend running it once every hour to see immediate results without being aggressive. 
+Change your cron line to:
+`cron: '0 * * * *'`
+
+### Production Phase
+Once you are happy with the results, move to a nightly cycle to save GitHub Action minutes:
+`cron: '0 0 * * *'` (Every night at Midnight)

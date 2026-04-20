@@ -55,16 +55,18 @@ async function cleanupCloudflareAccount(cf) {
     const scripts = (await wRes.json())?.result || [];
     for (const s of scripts) await cleanupWorkerDeployments(cf.account_id, s.id, h);
   } else {
-    console.error(`  ❌ Failed to fetch CF Workers: ${wRes.statusText}`);
+    const errText = await wRes.text();
+    console.error(`  ❌ Failed to fetch CF Workers: ${wRes.status} ${wRes.statusText} - ${errText}`);
   }
 
-  // Clean Pages
-  const pRes = await fetch(`${CF_API}/accounts/${cf.account_id}/pages/projects?per_page=100`, { headers: h });
+  // Clean Pages (Removed ?per_page=100 to fix the 400 Bad Request bug)
+  const pRes = await fetch(`${CF_API}/accounts/${cf.account_id}/pages/projects`, { headers: h });
   if (pRes.ok) {
     const projects = (await pRes.json())?.result || [];
     for (const project of projects) await cleanupPagesDeployments(cf.account_id, project.name, h);
   } else {
-    console.error(`  ❌ Failed to fetch CF Pages: ${pRes.statusText}`);
+    const errText = await pRes.text();
+    console.error(`  ❌ Failed to fetch CF Pages: ${pRes.status} ${pRes.statusText} - ${errText}`);
   }
 }
 

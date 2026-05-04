@@ -47,7 +47,8 @@ Maintain unique and sorted entries in ignore files to eliminate redundancy and s
 ├── GEMINI.md
 ├── LICENSE
 ├── README.md
+├── cleanup.sh
 └── src
     └── cleanup.js
 
-2 directories, 6 files
+2 directories, 7 files

@@ -32,7 +32,7 @@ jobs:
       # HK-01: DRY_RUN defaults to true for safety on scheduled runs.
       # On manual dispatch, uses the value chosen in the UI.
       # To run for real on a schedule, change the line below to: DRY_RUN: "false"
-      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'true' }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
       ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
       # Optional — add DISCORD_WEBHOOK_URL as a Repository Secret to enable notifications.
       # If the secret is not set, the notification step is silently skipped.

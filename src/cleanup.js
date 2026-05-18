@@ -375,17 +375,46 @@ async function cleanCloudflare(acc, report) {
 
       for (const worker of workers?.result ?? []) {
         await sleep(300);
-        const versions = await apiFetch(
+
+        // The Workers versions endpoint returns a v4 envelope.
+        // Depending on account/worker type, result may be:
+        //   - a plain array       → standard Workers API
+        //   - { items: [...] }    → Workers for Platforms / newer Gradual Rollouts API
+        // Normalise both into a flat array before any array operations.
+        const versionsResp = await apiFetch(
           `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${worker.id}/versions`,
           { headers }
         );
-        const all = versions?.result ?? [];
 
-        // HK-13: keep the latest (index 0) as "live" — always skip it
+        let all = [];
+        const raw = versionsResp?.result;
+        if (Array.isArray(raw)) {
+          all = raw;
+        } else if (raw && Array.isArray(raw.items)) {
+          all = raw.items;
+        } else if (raw && typeof raw === "object") {
+          // Unexpected shape — log it for debugging, skip this worker safely
+          console.warn(`   ⚠️  Unexpected versions response shape for worker "${worker.id}": ${JSON.stringify(raw).slice(0, 200)}`);
+          skipped++;
+          continue;
+        }
+        // null/undefined result means no versions listed — skip cleanly
+        if (!all.length) { skipped++; continue; }
+
+        // Sort newest-first so index 0 is always the live/latest version
+        all.sort((a, b) => {
+          const da = new Date(a.metadata?.created_on ?? a.created_on ?? 0);
+          const db = new Date(b.metadata?.created_on ?? b.created_on ?? 0);
+          return db - da;
+        });
+
+        // HK-13: index 0 is the live version — never touch it
+        // HK-12: age gate on candidates
+        // HK-04: keep N-1 more beyond the live one (keepCount total preserved)
         const eligible = all
-          .slice(1)                                                   // HK-13: skip live version
-          .filter((v) => ageInDays(v.metadata?.created_on ?? v.created_on) >= minAge)
-          .slice(keepCount - 1);                                      // already kept [0], keep N-1 more
+          .slice(1)
+          .filter((v) => ageInDays(v.metadata?.created_on ?? v.created_on ?? 0) >= minAge)
+          .slice(keepCount - 1);
 
         for (const ver of eligible) {
           const vId = ver.id ?? ver.version_id;

@@ -1,0 +1,40 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before requesting a new feature, please check that it doesn't require adding npm dependencies (zero-dependency is a hard constraint) and that it doesn't weaken any safety invariant.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation where this feature would help. Concrete examples are most useful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe what you'd like to see added or changed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches you've thought about?
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraint acknowledgement
+      options:
+        - label: This feature does not require any npm dependencies
+          required: true
+        - label: This feature does not weaken DRY_RUN protection, keep_count floor, age filtering, active deployment safeguard, or per-account isolation
+          required: true

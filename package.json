@@ -1,0 +1,16 @@
+{
+  "name": "twdx-housekeeping",
+  "version": "1.0.0",
+  "description": "Zero-dependency GitHub Action for cleaning stale Cloudflare Pages/Workers and GitHub deployments, Actions runs, and git history.",
+  "private": true,
+  "license": "MIT",
+  "author": "TheWebDexter",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "lint": "npx eslint@9 src/cleanup.js",
+    "test": "NODE_ENV=test node --test test/cleanup.test.js",
+    "start": "node src/cleanup.js"
+  }
+}

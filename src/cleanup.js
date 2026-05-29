@@ -98,7 +98,7 @@ function validateConfig(raw) {
   } catch (e) {
     throw new Error(
       `ACCOUNTS_JSON is not valid JSON.\n` +
-      `Parse error: ${e.message}\n` +
+      `Parse error: ${sanitizeError(e)}\n` +
       `Tip: Use https://jsonlint.com to check your JSON before pasting it as a secret.`
     );
   }
@@ -231,7 +231,7 @@ class SummaryReport {
       `💛 TWDxHouseKeeping is open source — consider sponsoring → https://github.com/sponsors/thewebdexter`
     );
 
-    const fs = await import("fs");
+    const fs = await import("node:fs");
     // HK-20: Never let summary write failure crash the run before Discord fires
     try {
       fs.appendFileSync(SUMMARY_FILE, lines.join("\n") + "\n");
@@ -360,11 +360,19 @@ async function sendDiscordNotification(report, hasErrors, runUrl) {
   };
 
   try {
-    const res = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.warn(`⚠️  Discord notification failed: HTTP ${res.status} — ${body}`);

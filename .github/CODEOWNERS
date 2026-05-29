@@ -1,0 +1,5 @@
+# All files require review from the primary maintainer.
+* @TheWebDexter
+
+# Workflow changes require additional scrutiny.
+.github/workflows/ @TheWebDexter

@@ -2,7 +2,7 @@ export default [
   {
     files: ["src/**/*.js", "test/**/*.js"],
     languageOptions: {
-      ecmaVersion: 2022,
+      ecmaVersion: 2024,
       sourceType: "commonjs",
       globals: {
         process:         "readonly",

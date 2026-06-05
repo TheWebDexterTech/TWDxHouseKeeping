@@ -1,0 +1,77 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please remove all tokens, secrets, and account IDs from any logs you paste below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear description of what went wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: How do we trigger this? Include your workflow trigger (scheduled / manual dispatch) and DRY_RUN value.
+      placeholder: |
+        1. Set DRY_RUN=true
+        2. Run the workflow manually
+        3. See error in step "Run cleanup"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Paste sanitised logs here (remove all tokens, account IDs, and secrets before pasting).
+    validations:
+      required: true
+
+  - type: dropdown
+    id: node_version
+    attributes:
+      label: Node.js version
+      options:
+        - "20"
+        - "22"
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where did this run?
+      options:
+        - GitHub Actions (ubuntu-latest)
+        - GitHub Actions (other runner)
+        - Local machine
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I tested with DRY_RUN=true first and the error also occurs there
+          required: false
+        - label: I have removed all tokens, secrets, and account IDs from any pasted output
+          required: true
+        - label: I searched existing issues and this has not been reported before
+          required: true

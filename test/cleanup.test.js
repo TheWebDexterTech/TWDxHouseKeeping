@@ -151,8 +151,8 @@ describe("keepCountFloor", () => {
     assert.equal(keepCountFloor(10, "test"), 10);
   });
 
-  it("floors 0 to 1", () => {
-    assert.equal(keepCountFloor(0, "test"), 1);
+  it("returns 0 as-is (delete-all mode)", () => {
+    assert.equal(keepCountFloor(0, "test"), 0);
   });
 
   it("floors negative values to 1", () => {

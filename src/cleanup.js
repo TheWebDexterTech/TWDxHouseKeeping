@@ -5,7 +5,7 @@
  * Fixes applied:
  *   HK-01 — Dry-run mode (DRY_RUN=true by default for safety)
  *   HK-03 — Full ACCOUNTS_JSON schema validation with clear errors
- *   HK-04 — keep_count hard floor of 1
+ *   HK-04 — keep_count floor of 0 (0 = delete-all mode; invalid/negative values default to 1)
  *   HK-10 — GitHub Actions Step Summary report
  *   HK-11 — Per-account error isolation (one failure doesn't stop others)
  *   HK-12 — min_age_days filter (skip items newer than N days)
@@ -26,6 +26,8 @@
  *   HK-27 — Workers HK-23 safe default: empty/null deployment versions treated as active so old-Upload-API workers are never deleted
  *   HK-28 — User repos: use /user/repos (authenticated) instead of /users/{u}/repos (public-only) so private repos are cleaned
  *   HK-29 — Git history auto-discovery: if git_history_repos is omitted, fall back to repos already discovered from users/orgs
+ *   HK-30 — Actions keep_count per workflow: group runs by workflow_id before slice so each workflow retains N runs independently
+ *   HK-31 — Deployments keep_count per environment: group by environment before slice so each environment retains N deployments independently
  */
 
 "use strict";
@@ -73,7 +75,7 @@ function ageInDays(dateStr) {
 
 function keepCountFloor(val, label) {
   const n = parseInt(val ?? 1, 10);
-  if (isNaN(n) || n < 1) {
+  if (isNaN(n) || n < 0) {
     console.warn(`  ⚠️  keep_count for "${label}" is invalid — defaulting to 1`);
     return 1;
   }
@@ -628,11 +630,22 @@ async function cleanGitHub(acc, report) {
           await sleep(100);
         }
 
-        const eligible = all
-          .filter((d) => !activeIds.has(d.id))                       // HK-13: skip active
-          .filter((d) => ageInDays(d.created_at) >= minAge)          // HK-12: age gate
-          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-          .slice(keepCount);                                          // HK-04: keep N
+        // HK-31: group by environment so keep_count is applied per environment, not per repo
+        const byEnv = new Map();
+        for (const dep of all) {
+          const env = dep.environment ?? "";
+          if (!byEnv.has(env)) { byEnv.set(env, []); }
+          byEnv.get(env).push(dep);
+        }
+        const eligible = [];
+        for (const envDeps of byEnv.values()) {
+          const toDelete = envDeps
+            .filter((d) => !activeIds.has(d.id))                     // HK-13: skip active
+            .filter((d) => ageInDays(d.created_at) >= minAge)        // HK-12: age gate
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(keepCount);                                        // HK-04: keep N per env
+          eligible.push(...toDelete);
+        }
 
         for (const dep of eligible) {
           console.log(`   ${DRY_RUN ? "[DRY]" : "DEL"} Deployment ${dep.id} (${owner}/${repo})`);
@@ -685,11 +698,22 @@ async function cleanGitHub(acc, report) {
           await sleep(200);
         }
 
-        const eligible = allRuns
-          .filter((r) => r.status === "completed")                   // never delete in-progress
-          .filter((r) => ageInDays(r.created_at) >= minAge)          // HK-12: age gate
-          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-          .slice(keepCount);                                          // HK-04: keep N
+        // HK-30: group by workflow_id so keep_count is applied per workflow, not per repo
+        const byWorkflow = new Map();
+        for (const run of allRuns) {
+          const wfId = run.workflow_id;
+          if (!byWorkflow.has(wfId)) { byWorkflow.set(wfId, []); }
+          byWorkflow.get(wfId).push(run);
+        }
+        const eligible = [];
+        for (const wfRuns of byWorkflow.values()) {
+          const toDelete = wfRuns
+            .filter((r) => r.status === "completed")                 // never delete in-progress
+            .filter((r) => ageInDays(r.created_at) >= minAge)        // HK-12: age gate
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(keepCount);                                        // HK-04: keep N per workflow
+          eligible.push(...toDelete);
+        }
 
         for (const run of eligible) {
           console.log(`   ${DRY_RUN ? "[DRY]" : "DEL"} Workflow run ${run.id} (${owner}/${repo})`);

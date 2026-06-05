@@ -147,17 +147,17 @@ Paste this structure into your `ACCOUNTS_JSON` secret. Remove the sections you d
 | `account_id` | Cloudflare | Your Cloudflare account ID | **Required** |
 | `users` | GitHub | List of GitHub usernames whose repos to clean | — |
 | `orgs` | GitHub | List of GitHub org names whose repos to clean | — |
-| `keep_count` | Both | Number of recent items to keep per project/repo. Minimum: 1 | `1` |
+| `keep_count` | Both | Number of recent items to keep **per workflow** (Actions), **per environment** (Deployments), and **per project** (Pages). Set to `0` to delete everything non-active. | `1` |
 | `min_age_days` | Both | Only delete items older than this many days. Protects recent deployments. | `0` |
 | `clean_deployments` | GitHub | Delete stale repo deployments | `false` |
 | `clean_actions` | GitHub | Delete completed workflow run history | `false` |
 | `clean_workers` | Cloudflare | Delete old Worker version history | `false` |
 | `clean_pages` | Cloudflare | Delete old Pages deployment history | `false` |
 | `clean_git_history` | GitHub | Squash or wipe git commit history for specified repos | `false` |
-| `git_history_repos` | GitHub | Repos to rewrite history on, format `"owner/repo"`. Required when `clean_git_history: true` | — |
+| `git_history_repos` | GitHub | Repos to rewrite history on, format `"owner/repo"`. Optional — if omitted, repos are auto-discovered from the users/orgs arrays. | — |
 | `keep_history_count` | GitHub | Number of recent commits to preserve. `0` = full orphan wipe (single commit carrying current tree) | `0` |
 
-> **Note:** `keep_count` is enforced to a minimum of 1 in the script, even if you set it lower. The currently active/live deployment is always preserved regardless of `keep_count`.
+> **Note:** `keep_count: 0` is valid and means delete everything non-active — all completed workflow runs are deleted, all non-active/non-aliased deployments are deleted. The currently active/live deployment is always preserved regardless of `keep_count`. `keep_count` is applied independently per workflow (for Actions) and per environment (for Deployments and Pages), so setting `1` keeps exactly one entry per workflow/environment — not one across the entire repo.
 
 ---
 
@@ -262,7 +262,7 @@ The token has expired or been revoked. Rotate it and update the `ACCOUNTS_JSON` 
 
 **Run finished but nothing was deleted**
 1. Check `min_age_days` — items younger than this are skipped.
-2. Check `keep_count` — if you have exactly that many deployments, nothing qualifies.
+2. Check `keep_count` — if you have exactly that many items per workflow/environment, nothing qualifies. Set to `0` to delete all non-active items.
 3. Confirm `DRY_RUN=false` is set for scheduled runs if you want live deletions.
 
 **Discord notification not arriving**

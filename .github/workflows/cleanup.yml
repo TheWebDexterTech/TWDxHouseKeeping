@@ -1,0 +1,82 @@
+name: 🧹 TWDxHouseKeeping
+
+on:
+  workflow_dispatch:        # Manual trigger from Actions tab
+    inputs:
+      dry_run:
+        description: "Dry run? (true = preview only, false = actually delete)"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+# HK-05: Concurrency guard — prevent two runs overlapping
+concurrency:
+  group: housekeeping
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Run Housekeeping
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    env:
+      # HK-01: DRY_RUN defaults to true for safety on scheduled runs.
+      # On manual dispatch, uses the value chosen in the UI.
+      # To run for real on a schedule, change the line below to: DRY_RUN: "false"
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'true' }}
+      ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
+      # Optional — add DISCORD_WEBHOOK_URL as a Repository Secret to enable notifications.
+      # If the secret is not set, the notification step is silently skipped.
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Show run mode
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "🔍 Running in DRY-RUN mode — nothing will be deleted."
+          else
+            echo "🗑️  Running in LIVE mode — deletions are REAL."
+          fi
+
+      - name: Validate environment
+        run: |
+          node - <<'EOF'
+          const pkg = JSON.parse(require("fs").readFileSync("package.json", "utf8"));
+          const required = pkg.engines.node.replace(">=", "");
+          const [rMaj] = required.split(".").map(Number);
+          const [cMaj] = process.versions.node.split(".").map(Number);
+          if (cMaj < rMaj) {
+            console.error(`Node ${process.versions.node} does not satisfy engines: ${pkg.engines.node}`);
+            process.exit(1);
+          }
+          console.log(`Node ${process.versions.node} satisfies engines: ${pkg.engines.node}`);
+          EOF
+
+      - name: Syntax check
+        run: node --check src/cleanup.js && node --check test/cleanup.test.js
+
+      - name: Lint
+        run: npx --yes eslint@9 src/cleanup.js
+
+      - name: Test
+        run: NODE_ENV=test node --test test/cleanup.test.js
+
+      # This step only runs if all preflight steps above pass.
+      # Validate environment → Syntax check → Lint → Test must all succeed first.
+      - name: Run cleanup
+        run: node src/cleanup.js

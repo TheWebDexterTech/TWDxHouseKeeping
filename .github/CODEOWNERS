@@ -1,0 +1,6 @@
+# Replace @your-github-username with your own GitHub username.
+# This ensures all PRs require your review before merging.
+* @your-github-username
+
+# Workflow changes require additional scrutiny.
+.github/workflows/ @your-github-username

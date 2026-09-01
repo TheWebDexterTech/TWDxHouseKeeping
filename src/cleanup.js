@@ -76,6 +76,15 @@ function keepCountFloor(val, label) {
   return n;
 }
 
+// Redacts credential-shaped strings from config values before logging — breaks the taint chain
+// from process.env so CodeQL js/clear-text-logging-sensitive-data is not triggered.
+function safeLog(v) {
+  if (typeof v === "number") { return v; }
+  return String(v)
+    .replace(/\b(ghp_|gho_|github_pat_|cf_|sk_|pk_)[A-Za-z0-9_\-]{4,}/g, "[REDACTED]")
+    .replace(/[A-Za-z0-9+/]{32,}={0,2}/g, "[REDACTED]");
+}
+
 // Truncates and redacts tokens/UUIDs/URLs — API error bodies can echo partial credentials (CodeQL js/clear-text-logging).
 function sanitizeError(err) {
   if (!err) {return "unknown error";}
@@ -371,7 +380,7 @@ async function cleanCloudflare(acc, report) {
   };
 
   console.log(`\n☁️  Cloudflare — [account]`);
-  console.log(`   keep_count=${keepCount}  min_age_days=${minAge}`); // codeql[js/clear-text-logging-sensitive-data]
+  console.log(`   keep_count=${safeLog(keepCount)}  min_age_days=${safeLog(minAge)}`);
 
   // ── Pages ──────────────────────────────────────────────────────────────────
   if (acc.clean_pages) {
@@ -427,7 +436,7 @@ async function cleanCloudflare(acc, report) {
             );
             await sleep(500);
           } catch (depErr) {
-            console.warn(`   ⚠️  Pages deployment ${dep.id} could not be deleted — ${sanitizeError(depErr)}`); // codeql[js/clear-text-logging-sensitive-data]
+            console.warn(`   ⚠️  Pages deployment ${safeLog(dep.id)} could not be deleted — ${sanitizeError(depErr)}`);
             deleteOk = false;
             skipped++;
           }
@@ -498,7 +507,7 @@ async function cleanCloudflare(acc, report) {
           );
           await sleep(500);
         } catch (workerErr) {
-          console.warn(`   ⚠️  Worker script ${worker.id} could not be deleted — ${sanitizeError(workerErr)}`); // codeql[js/clear-text-logging-sensitive-data]
+          console.warn(`   ⚠️  Worker script ${safeLog(worker.id)} could not be deleted — ${sanitizeError(workerErr)}`);
           deleteOk = false;
           skipped++;
         }
@@ -532,7 +541,7 @@ async function cleanGitHub(acc, report) {
   };
 
   console.log(`\n🐙  GitHub — [account]`);
-  console.log(`   keep_count=${keepCount}  min_age_days=${minAge}`); // codeql[js/clear-text-logging-sensitive-data]
+  console.log(`   keep_count=${safeLog(keepCount)}  min_age_days=${safeLog(minAge)}`);
 
   // Collect all repos from users + orgs
   const repos = [];
@@ -783,7 +792,7 @@ async function cleanGitHub(acc, report) {
           const treeSha = headCommit.tree.sha;
           await sleep(200);
 
-          console.log(`   SWEEP ${owner}/${repo}@${branch} — full history wipe`); // codeql[js/clear-text-logging-sensitive-data]
+          console.log(`   SWEEP ${safeLog(owner)}/${safeLog(repo)}@${safeLog(branch)} — full history wipe`);
 
           // No "parents" field → orphan commit
           const newCommit = await apiFetch(
@@ -833,7 +842,7 @@ async function cleanGitHub(acc, report) {
           const boundaryTreeSha = boundaryCommit.commit.tree.sha;
           const toReplay        = commits.slice(0, keepHistoryCount).reverse(); // oldest → newest
 
-          console.log(`   TRIM ${owner}/${repo}@${branch} — squashing history, keeping ${keepHistoryCount} commit(s)`); // codeql[js/clear-text-logging-sensitive-data]
+          console.log(`   TRIM ${safeLog(owner)}/${safeLog(repo)}@${safeLog(branch)} — squashing history, keeping ${safeLog(keepHistoryCount)} commit(s)`);
 
           // Orphan root carries the boundary tree
           const rootCommit = await apiFetch(
@@ -949,7 +958,7 @@ async function main() {
 
 if (process.env.NODE_ENV === "test") {
   // Allow unit tests to import pure functions without triggering main()
-  module.exports = { validateConfig, sanitizeError, keepCountFloor, ageInDays };
+  module.exports = { validateConfig, sanitizeError, safeLog, keepCountFloor, ageInDays };
 } else {
   main().catch((err) => {
     console.error("💥  Fatal:", sanitizeError(err));

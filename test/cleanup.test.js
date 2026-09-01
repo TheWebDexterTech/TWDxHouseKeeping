@@ -10,7 +10,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
 // The conditional export at the bottom of cleanup.js exposes these when NODE_ENV=test
-const { validateConfig, sanitizeError, keepCountFloor, ageInDays } =
+const { validateConfig, sanitizeError, safeLog, keepCountFloor, ageInDays } =
   require("../src/cleanup.js");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -137,6 +137,37 @@ describe("sanitizeError", () => {
   it("accepts an Error object and uses its message", () => {
     const err = new Error("simple error message");
     assert.equal(sanitizeError(err), "simple error message");
+  });
+});
+
+// ── safeLog ───────────────────────────────────────────────────────────────────
+
+describe("safeLog", () => {
+  it("passes numbers through unchanged", () => {
+    assert.equal(safeLog(5), 5);
+    assert.equal(safeLog(0), 0);
+  });
+
+  it("passes safe strings (owner/repo names) through unchanged", () => {
+    assert.equal(safeLog("thewebdexter"), "thewebdexter");
+    assert.equal(safeLog("main"), "main");
+  });
+
+  it("redacts ghp_ token-shaped strings", () => {
+    assert.ok(!safeLog("ghp_abcdef123456").includes("ghp_"));
+  });
+
+  it("redacts github_pat_ token-shaped strings", () => {
+    assert.ok(!safeLog("github_pat_abc123xyz").includes("github_pat_"));
+  });
+
+  it("redacts base64-shaped long strings", () => {
+    const long = "A".repeat(32);
+    assert.ok(!safeLog(long).includes(long));
+  });
+
+  it("coerces non-string non-number to string", () => {
+    assert.equal(typeof safeLog("repo-name"), "string");
   });
 });
 

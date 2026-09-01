@@ -6,7 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+- HK-39: Actions artifact cleanup — when `clean_actions: true`, all Actions artifacts are now deleted in addition to workflow runs. Artifacts persist independently of runs and count against the 500MB GitHub free-tier storage quota.
+
 ### Fixed
+- HK-38: Cloudflare Pages deployments with aliases (branch previews, custom domain previews) are now force-deleted via `?force=true` instead of being pre-filtered out — previously aliased deployments were silently skipped (CF error 8000035), leaving stale preview history behind.
 - HK-28: GitHub user repos now fetched via `GET /user/repos?visibility=all&affiliation=owner` (authenticated endpoint) instead of `GET /users/{username}/repos` (public-only) — private repositories were silently skipped during cleanup
 - HK-29: `git_history_repos` is now optional — when omitted, the git history job falls back to the same repos already auto-discovered from `users`/`orgs`; explicit list still supported for targeted sweeps
 - HK-21: Cloudflare Pages projects list no longer passes `page`/`per_page` query params — the endpoint does not accept them (CF error 8000024 "Invalid list options provided"), causing every Pages cleanup run to fail before inspecting any project

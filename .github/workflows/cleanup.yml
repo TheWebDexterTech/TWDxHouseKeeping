@@ -1,16 +1,7 @@
 name: 🧹 TWDxHouseKeeping
 
 on:
-  workflow_dispatch:        # Manual trigger from Actions tab
-    inputs:
-      dry_run:
-        description: "Dry run? (true = preview only, false = actually delete)"
-        required: true
-        default: "true"
-        type: choice
-        options:
-          - "true"
-          - "false"
+  workflow_dispatch:  # On-demand only — trigger manually from the Actions tab
 
 # HK-05: Concurrency guard — prevent two runs overlapping
 concurrency:
@@ -27,10 +18,6 @@ jobs:
       contents: read
 
     env:
-      # HK-01: DRY_RUN defaults to true for safety on scheduled runs.
-      # On manual dispatch, uses the value chosen in the UI.
-      # To run for real on a schedule, change the line below to: DRY_RUN: "false"
-      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'true' }}
       ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
       # Optional — add DISCORD_WEBHOOK_URL as a Repository Secret to enable notifications.
       # If the secret is not set, the notification step is silently skipped.
@@ -44,14 +31,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "22"
-
-      - name: Show run mode
-        run: |
-          if [ "$DRY_RUN" = "true" ]; then
-            echo "🔍 Running in DRY-RUN mode — nothing will be deleted."
-          else
-            echo "🗑️  Running in LIVE mode — deletions are REAL."
-          fi
 
       - name: Validate environment
         run: |

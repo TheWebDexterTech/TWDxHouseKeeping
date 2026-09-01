@@ -3,7 +3,7 @@
  * Developed by TheWebDexter.com
  *
  * Fixes applied:
- *   HK-01 — Dry-run mode (DRY_RUN=true by default for safety)
+ *   HK-35 — Removed DRY_RUN mode: always executes live deletions; on-demand workflow only
  *   HK-03 — Full ACCOUNTS_JSON schema validation with clear errors
  *   HK-04 — keep_count hard floor of 1
  *   HK-10 — GitHub Actions Step Summary report
@@ -34,13 +34,7 @@ const fs = require("node:fs");
 
 // ── Config & Environment ──────────────────────────────────────────────────────
 
-const DRY_RUN = (process.env.DRY_RUN ?? "true").toLowerCase() !== "false";
 const SUMMARY_FILE = process.env.GITHUB_STEP_SUMMARY ?? null;
-
-if (DRY_RUN) {
-  console.log("🔍  DRY-RUN MODE — no deletions will be made");
-  console.log("    Set DRY_RUN=false in your workflow env to run for real.\n");
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -200,9 +194,8 @@ class SummaryReport {
 
   async write() {
     if (!SUMMARY_FILE) {return;}
-    const mode = DRY_RUN ? " *(Dry Run)*" : "";
     const lines = [
-      `## 🧹 TWDxHouseKeeping Report${mode}`,
+      `## 🧹 TWDxHouseKeeping Report`,
       ``,
       `**Run:** ${new Date().toUTCString()}`,
       ``,
@@ -213,8 +206,7 @@ class SummaryReport {
     ];
 
     for (const r of this.rows) {
-      const del = DRY_RUN ? `~~${r.deleted}~~ *(dry run)*` : String(r.deleted);
-      lines.push(`| ${r.account} | ${r.platform} | ${r.type} | ${del} | ${r.skipped} |`);
+      lines.push(`| ${r.account} | ${r.platform} | ${r.type} | ${r.deleted} | ${r.skipped} |`);
     }
 
     if (!this.rows.length) {
@@ -254,12 +246,10 @@ async function sendDiscordNotification(report, hasErrors, runUrl) {
   const timestamp    = new Date().toISOString();
 
   let color;
-  if (DRY_RUN)        {color = 0x5865F2;} // Discord blurple — dry run
-  else if (hasErrors) {color = 0xED4245;} // red — errors
+  if (hasErrors)             {color = 0xED4245;} // red — errors
   else if (totalDeleted > 0) {color = 0x57F287;} // green — cleaned something
-  else                {color = 0xFEE75C;} // yellow — nothing to clean
+  else                       {color = 0xFEE75C;} // yellow — nothing to clean
 
-  const modeBadge = DRY_RUN ? "🔍 Dry Run" : "🗑️ Live Run";
   const statusLine = hasErrors
     ? "⚠️ Completed with errors"
     : totalDeleted > 0
@@ -279,8 +269,7 @@ async function sendDiscordNotification(report, hasErrors, runUrl) {
     for (const [acct, rows] of Object.entries(byAccount)) {
       tableLines.push(`**${acct}**`);
       for (const r of rows) {
-        const delText = DRY_RUN ? `~~${r.deleted}~~ (dry)` : String(r.deleted);
-        tableLines.push(`  ${r.platform} ${r.type}: ${delText} deleted · ${r.skipped} kept`);
+        tableLines.push(`  ${r.platform} ${r.type}: ${r.deleted} deleted · ${r.skipped} kept`);
       }
     }
   }
@@ -301,12 +290,7 @@ async function sendDiscordNotification(report, hasErrors, runUrl) {
     },
     {
       name: "🔢 Totals",
-      value: `**Deleted:** ${DRY_RUN ? `~~${totalDeleted}~~ (dry run)` : totalDeleted}\n**Kept/Skipped:** ${totalSkipped}`,
-      inline: true,
-    },
-    {
-      name: "⚙️ Mode",
-      value: modeBadge,
+      value: `**Deleted:** ${totalDeleted}\n**Kept/Skipped:** ${totalSkipped}`,
       inline: true,
     },
   ];
@@ -385,7 +369,7 @@ async function cleanCloudflare(acc, report) {
   };
 
   console.log(`\n☁️  Cloudflare — [account]`);
-  console.log(`   keep_count=${keepCount}  min_age_days=${minAge}  dry_run=${DRY_RUN}`);
+  console.log(`   keep_count=${keepCount}  min_age_days=${minAge}`);
 
   // ── Pages ──────────────────────────────────────────────────────────────────
   if (acc.clean_pages) {
@@ -431,22 +415,20 @@ async function cleanCloudflare(acc, report) {
           .slice(keepCount);                                          // HK-04: keep N most recent
 
         for (const dep of eligible) {
-          console.log(`   ${DRY_RUN ? "[DRY]" : "DEL"} Pages deployment ${dep.id} (${project.name})`);
+          console.log(`   DEL Pages deployment ${dep.id} (${project.name})`);
           // HK-26: per-deployment isolation — aliased deployments where aliases was null/missing in
           // the list response (not caught by HK-24) return 8000035; any other 4xx is also handled.
           let deleteOk = true;
-          if (!DRY_RUN) {
-            try {
-              await apiFetch(
-                `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${project.name}/deployments/${dep.id}`,
-                { method: "DELETE", headers }
-              );
-              await sleep(500);
-            } catch (depErr) {
-              console.warn(`   ⚠️  Pages deployment ${dep.id} could not be deleted — ${sanitizeError(depErr)}`);
-              deleteOk = false;
-              skipped++;
-            }
+          try {
+            await apiFetch(
+              `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${project.name}/deployments/${dep.id}`,
+              { method: "DELETE", headers }
+            );
+            await sleep(500);
+          } catch (depErr) {
+            console.warn(`   ⚠️  Pages deployment ${dep.id} could not be deleted — ${sanitizeError(depErr)}`);
+            deleteOk = false;
+            skipped++;
           }
           if (deleteOk) { deleted++; }
         }
@@ -504,22 +486,20 @@ async function cleanCloudflare(acc, report) {
           continue;
         }
 
-        console.log(`   ${DRY_RUN ? "[DRY]" : "DEL"} Worker script ${worker.id}`);
+        console.log(`   DEL Worker script ${worker.id}`);
         // HK-25: per-worker isolation — a binding restriction (e.g. Queue consumer, CF 10064) or
         // any other 4xx on DELETE skips this script and continues rather than aborting the block.
         let deleteOk = true;
-        if (!DRY_RUN) {
-          try {
-            await apiFetch(
-              `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${worker.id}`,
-              { method: "DELETE", headers }
-            );
-            await sleep(500);
-          } catch (workerErr) {
-            console.warn(`   ⚠️  Worker script ${worker.id} could not be deleted — ${sanitizeError(workerErr)}`);
-            deleteOk = false;
-            skipped++;
-          }
+        try {
+          await apiFetch(
+            `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${worker.id}`,
+            { method: "DELETE", headers }
+          );
+          await sleep(500);
+        } catch (workerErr) {
+          console.warn(`   ⚠️  Worker script ${worker.id} could not be deleted — ${sanitizeError(workerErr)}`);
+          deleteOk = false;
+          skipped++;
         }
         if (deleteOk) { deleted++; }
       }
@@ -551,7 +531,7 @@ async function cleanGitHub(acc, report) {
   };
 
   console.log(`\n🐙  GitHub — [account]`);
-  console.log(`   keep_count=${keepCount}  min_age_days=${minAge}  dry_run=${DRY_RUN}`);
+  console.log(`   keep_count=${keepCount}  min_age_days=${minAge}`);
 
   // Collect all repos from users + orgs
   const repos = [];
@@ -635,24 +615,22 @@ async function cleanGitHub(acc, report) {
           .slice(keepCount);                                          // HK-04: keep N
 
         for (const dep of eligible) {
-          console.log(`   ${DRY_RUN ? "[DRY]" : "DEL"} Deployment ${dep.id} (${owner}/${repo})`);
-          if (!DRY_RUN) {
-            // Must set inactive first before deletion
-            await apiFetch(
-              `https://api.github.com/repos/${owner}/${repo}/deployments/${dep.id}/statuses`,
-              {
-                method: "POST",
-                headers,
-                body: JSON.stringify({ state: "inactive" }),
-              }
-            );
-            await sleep(300);
-            await apiFetch(
-              `https://api.github.com/repos/${owner}/${repo}/deployments/${dep.id}`,
-              { method: "DELETE", headers }
-            );
-            await sleep(500);
-          }
+          console.log(`   DEL Deployment ${dep.id} (${owner}/${repo})`);
+          // Must set inactive first before deletion
+          await apiFetch(
+            `https://api.github.com/repos/${owner}/${repo}/deployments/${dep.id}/statuses`,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ state: "inactive" }),
+            }
+          );
+          await sleep(300);
+          await apiFetch(
+            `https://api.github.com/repos/${owner}/${repo}/deployments/${dep.id}`,
+            { method: "DELETE", headers }
+          );
+          await sleep(500);
           totalDeleted++;
         }
         totalSkipped += all.length - eligible.length;
@@ -692,14 +670,12 @@ async function cleanGitHub(acc, report) {
           .slice(keepCount);                                          // HK-04: keep N
 
         for (const run of eligible) {
-          console.log(`   ${DRY_RUN ? "[DRY]" : "DEL"} Workflow run ${run.id} (${owner}/${repo})`);
-          if (!DRY_RUN) {
-            await apiFetch(
-              `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
-              { method: "DELETE", headers }
-            );
-            await sleep(500);
-          }
+          console.log(`   DEL Workflow run ${run.id} (${owner}/${repo})`);
+          await apiFetch(
+            `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
+            { method: "DELETE", headers }
+          );
+          await sleep(500);
           totalDeleted++;
         }
         totalSkipped += allRuns.length - eligible.length;
@@ -762,30 +738,28 @@ async function cleanGitHub(acc, report) {
           const treeSha = headCommit.tree.sha;
           await sleep(200);
 
-          console.log(`   ${DRY_RUN ? "[DRY]" : "SWEEP"} ${owner}/${repo}@${branch} — full history wipe`);
+          console.log(`   SWEEP ${owner}/${repo}@${branch} — full history wipe`);
 
-          if (!DRY_RUN) {
-            // No "parents" field → orphan commit
-            const newCommit = await apiFetch(
-              `https://api.github.com/repos/${owner}/${repo}/git/commits`,
-              {
-                method: "POST",
-                headers,
-                body: JSON.stringify({ message: SWEEP_MSG, tree: treeSha }),
-              }
-            );
-            await sleep(300);
+          // No "parents" field → orphan commit
+          const newCommit = await apiFetch(
+            `https://api.github.com/repos/${owner}/${repo}/git/commits`,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ message: SWEEP_MSG, tree: treeSha }),
+            }
+          );
+          await sleep(300);
 
-            await apiFetch(
-              `https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branch}`,
-              {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify({ sha: newCommit.sha, force: true }),
-              }
-            );
-            await sleep(500);
-          }
+          await apiFetch(
+            `https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branch}`,
+            {
+              method: "PATCH",
+              headers,
+              body: JSON.stringify({ sha: newCommit.sha, force: true }),
+            }
+          );
+          await sleep(500);
           totalRewritten++;
 
         } else {
@@ -814,48 +788,46 @@ async function cleanGitHub(acc, report) {
           const boundaryTreeSha = boundaryCommit.commit.tree.sha;
           const toReplay        = commits.slice(0, keepHistoryCount).reverse(); // oldest → newest
 
-          console.log(`   ${DRY_RUN ? "[DRY]" : "TRIM"} ${owner}/${repo}@${branch} — squashing history, keeping ${keepHistoryCount} commit(s)`);
+          console.log(`   TRIM ${owner}/${repo}@${branch} — squashing history, keeping ${keepHistoryCount} commit(s)`);
 
-          if (!DRY_RUN) {
-            // Orphan root carries the boundary tree
-            const rootCommit = await apiFetch(
+          // Orphan root carries the boundary tree
+          const rootCommit = await apiFetch(
+            `https://api.github.com/repos/${owner}/${repo}/git/commits`,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ message: SWEEP_MSG, tree: boundaryTreeSha }),
+            }
+          );
+          let parentSha = rootCommit.sha;
+          await sleep(300);
+
+          for (const c of toReplay) {
+            const newC = await apiFetch(
               `https://api.github.com/repos/${owner}/${repo}/git/commits`,
               {
                 method: "POST",
                 headers,
-                body: JSON.stringify({ message: SWEEP_MSG, tree: boundaryTreeSha }),
+                body: JSON.stringify({
+                  message: c.commit.message,
+                  tree:    c.commit.tree.sha,
+                  parents: [parentSha],
+                }),
               }
             );
-            let parentSha = rootCommit.sha;
+            parentSha = newC.sha;
             await sleep(300);
-
-            for (const c of toReplay) {
-              const newC = await apiFetch(
-                `https://api.github.com/repos/${owner}/${repo}/git/commits`,
-                {
-                  method: "POST",
-                  headers,
-                  body: JSON.stringify({
-                    message: c.commit.message,
-                    tree:    c.commit.tree.sha,
-                    parents: [parentSha],
-                  }),
-                }
-              );
-              parentSha = newC.sha;
-              await sleep(300);
-            }
-
-            await apiFetch(
-              `https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branch}`,
-              {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify({ sha: parentSha, force: true }),
-              }
-            );
-            await sleep(500);
           }
+
+          await apiFetch(
+            `https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branch}`,
+            {
+              method: "PATCH",
+              headers,
+              body: JSON.stringify({ sha: parentSha, force: true }),
+            }
+          );
+          await sleep(500);
           totalRewritten++;
         }
       } catch (err) {
@@ -922,7 +894,7 @@ async function main() {
 
   await sendDiscordNotification(report, hasErrors, runUrl);
 
-  console.log(`\n✅  Housekeeping complete${DRY_RUN ? " (dry run — nothing was deleted)" : ""}`);
+  console.log('\n✅  Housekeeping complete');
 
   if (hasErrors) {
     console.error("⚠️  Some accounts encountered errors. Check the log above.");

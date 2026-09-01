@@ -371,7 +371,7 @@ async function cleanCloudflare(acc, report) {
   };
 
   console.log(`\n☁️  Cloudflare — [account]`);
-  console.log(`   keep_count=${keepCount}  min_age_days=${minAge}`); // lgtm[js/clear-text-logging-sensitive-data]
+  console.log(`   keep_count=${keepCount}  min_age_days=${minAge}`); // codeql[js/clear-text-logging-sensitive-data]
 
   // ── Pages ──────────────────────────────────────────────────────────────────
   if (acc.clean_pages) {
@@ -427,7 +427,7 @@ async function cleanCloudflare(acc, report) {
             );
             await sleep(500);
           } catch (depErr) {
-            console.warn(`   ⚠️  Pages deployment ${dep.id} could not be deleted — ${sanitizeError(depErr)}`); // lgtm[js/clear-text-logging-sensitive-data]
+            console.warn(`   ⚠️  Pages deployment ${dep.id} could not be deleted — ${sanitizeError(depErr)}`); // codeql[js/clear-text-logging-sensitive-data]
             deleteOk = false;
             skipped++;
           }
@@ -498,7 +498,7 @@ async function cleanCloudflare(acc, report) {
           );
           await sleep(500);
         } catch (workerErr) {
-          console.warn(`   ⚠️  Worker script ${worker.id} could not be deleted — ${sanitizeError(workerErr)}`); // lgtm[js/clear-text-logging-sensitive-data]
+          console.warn(`   ⚠️  Worker script ${worker.id} could not be deleted — ${sanitizeError(workerErr)}`); // codeql[js/clear-text-logging-sensitive-data]
           deleteOk = false;
           skipped++;
         }
@@ -532,7 +532,7 @@ async function cleanGitHub(acc, report) {
   };
 
   console.log(`\n🐙  GitHub — [account]`);
-  console.log(`   keep_count=${keepCount}  min_age_days=${minAge}`); // lgtm[js/clear-text-logging-sensitive-data]
+  console.log(`   keep_count=${keepCount}  min_age_days=${minAge}`); // codeql[js/clear-text-logging-sensitive-data]
 
   // Collect all repos from users + orgs
   const repos = [];
@@ -783,7 +783,7 @@ async function cleanGitHub(acc, report) {
           const treeSha = headCommit.tree.sha;
           await sleep(200);
 
-          console.log(`   SWEEP ${owner}/${repo}@${branch} — full history wipe`); // lgtm[js/clear-text-logging-sensitive-data]
+          console.log(`   SWEEP ${owner}/${repo}@${branch} — full history wipe`); // codeql[js/clear-text-logging-sensitive-data]
 
           // No "parents" field → orphan commit
           const newCommit = await apiFetch(
@@ -833,7 +833,7 @@ async function cleanGitHub(acc, report) {
           const boundaryTreeSha = boundaryCommit.commit.tree.sha;
           const toReplay        = commits.slice(0, keepHistoryCount).reverse(); // oldest → newest
 
-          console.log(`   TRIM ${owner}/${repo}@${branch} — squashing history, keeping ${keepHistoryCount} commit(s)`); // lgtm[js/clear-text-logging-sensitive-data]
+          console.log(`   TRIM ${owner}/${repo}@${branch} — squashing history, keeping ${keepHistoryCount} commit(s)`); // codeql[js/clear-text-logging-sensitive-data]
 
           // Orphan root carries the boundary tree
           const rootCommit = await apiFetch(

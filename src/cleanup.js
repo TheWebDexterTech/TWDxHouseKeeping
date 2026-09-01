@@ -20,9 +20,11 @@
  *   HK-21 — Pages projects list: removed unsupported page/per_page params (CF error 8000024)
  *   HK-22 — Workers cleanup: delete entire scripts via DELETE /scripts/{id} (version DELETE not supported by API)
  *   HK-23 — Workers active-deployment guard: check /deployments before deleting; skip any script with >0% traffic
- *   HK-24 — Pages aliased-deployment guard: filter out deployments with aliases before eligible slice (CF error 8000035)
+ *   HK-24 — Pages aliased-deployment guard: superseded by HK-38 (force-delete)
  *   HK-25 — Workers per-worker error isolation: DELETE failures skip that script and continue rather than aborting the block
- *   HK-26 — Pages per-deployment isolation: DELETE failures skip that deployment and continue (handles aliases not in list response)
+ *   HK-26 — Pages per-deployment isolation: DELETE failures skip that deployment and continue
+ *   HK-38 — Pages force-delete: use ?force=true to remove aliased deployments instead of pre-filtering them out
+ *   HK-39 — Actions artifact cleanup: delete all Actions artifacts when clean_actions is enabled (counts against 500MB free-tier storage)
  *   HK-27 — Workers HK-23 safe default: empty/null deployment versions treated as active so old-Upload-API workers are never deleted
  *   HK-28 — User repos: use /user/repos (authenticated) instead of /users/{u}/repos (public-only) so private repos are cleaned
  *   HK-29 — Git history auto-discovery: if git_history_repos is omitted, fall back to repos already discovered from users/orgs
@@ -409,19 +411,18 @@ async function cleanCloudflare(acc, report) {
 
         const eligible = all
           .filter((d) => d.id !== activeId)                          // HK-13: never delete active
-          .filter((d) => !d.aliases?.length)                         // HK-24: never delete aliased deployments (CF 8000035)
           .filter((d) => ageInDays(d.created_on) >= minAge)          // HK-12: age gate
           .sort((a, b) => new Date(b.created_on) - new Date(a.created_on))
           .slice(keepCount);                                          // HK-04: keep N most recent
 
         for (const dep of eligible) {
-          console.log(`   DEL Pages deployment ${dep.id} (${project.name})`);
-          // HK-26: per-deployment isolation — aliased deployments where aliases was null/missing in
-          // the list response (not caught by HK-24) return 8000035; any other 4xx is also handled.
+          console.log(`   DEL Pages deployment ${dep.id} (${project.name})${dep.aliases?.length ? " [aliased→force]" : ""}`);
+          // HK-26: per-deployment isolation — any 4xx is caught per-deployment and skipped.
+          // HK-38: ?force=true removes aliased deployments that would otherwise return CF error 8000035.
           let deleteOk = true;
           try {
             await apiFetch(
-              `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${project.name}/deployments/${dep.id}`,
+              `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${project.name}/deployments/${dep.id}?force=true`,
               { method: "DELETE", headers }
             );
             await sleep(500);
@@ -687,6 +688,50 @@ async function cleanGitHub(acc, report) {
     }
     console.log(`   Actions: ${totalDeleted} deleted, ${totalSkipped} kept/skipped`);
     report.add(label, "GitHub", "Actions", totalDeleted, totalSkipped);
+
+    // ── Artifacts ──────────────────────────────────────────────────────────────
+    // HK-39: Artifacts persist independently of runs and count against the 500MB
+    // GitHub free-tier storage quota. Delete them whenever clean_actions is enabled.
+    let artDeleted = 0, artSkipped = 0;
+    for (const { owner, repo } of repos) {
+      try {
+        await sleep(200);
+        const allArtifacts = [];
+        let artPage = 1;
+        while (true) {
+          const batch = await apiFetch(
+            `https://api.github.com/repos/${owner}/${repo}/actions/artifacts?per_page=100&page=${artPage}`,
+            { headers }
+          );
+          if (!batch?.artifacts?.length) { break; }
+          allArtifacts.push(...batch.artifacts);
+          artPage++;
+          await sleep(200);
+        }
+
+        const eligibleArt = allArtifacts
+          .filter((a) => ageInDays(a.created_at) >= minAge)           // HK-12: age gate
+          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+          .slice(keepCount);                                           // HK-04: keep N most recent
+
+        for (const artifact of eligibleArt) {
+          console.log(`   DEL Artifact ${artifact.id} "${artifact.name}" (${owner}/${repo})`);
+          await apiFetch(
+            `https://api.github.com/repos/${owner}/${repo}/actions/artifacts/${artifact.id}`,
+            { method: "DELETE", headers }
+          );
+          await sleep(300);
+          artDeleted++;
+        }
+        artSkipped += allArtifacts.length - eligibleArt.length;
+      } catch (err) {
+        const safe = sanitizeError(err);
+        console.error(`   ❌ Artifacts cleanup failed for ${owner}/${repo}: ${safe}`);
+        report.addError(label, "GitHub Artifacts", `${owner}/${repo}: ${safe}`);
+      }
+    }
+    console.log(`   Artifacts: ${artDeleted} deleted, ${artSkipped} kept/skipped`);
+    report.add(label, "GitHub", "Artifacts", artDeleted, artSkipped);
   }
 
   // ── Git History ────────────────────────────────────────────────────────────
